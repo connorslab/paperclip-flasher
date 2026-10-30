@@ -410,6 +410,21 @@ func (c *Controller) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cookie, e := r.Cookie("paperclip")
+	if r.Method == "GET" && r.URL.Path == "/api/pool-status" {
+		b, err := c.native("GET", "/mcb/pools", nil, false)
+		if err != nil {
+			jsonReply(w, 502, map[string]string{"error": "Pool settings unavailable"})
+			return
+		}
+		pools, err := publicPools(poolTelemetry(b))
+		if err != nil {
+			jsonReply(w, 502, map[string]string{"error": "Invalid pool settings"})
+			return
+		}
+		editable := e == nil && time.Now().Before(c.sessions[cookie.Value].Expires)
+		jsonReply(w, 200, map[string]any{"pools": pools, "editable": editable})
+		return
+	}
 	if e != nil || time.Now().After(c.sessions[cookie.Value].Expires) {
 		jsonReply(w, 401, map[string]string{"error": "Unlock with your miner password first"})
 		return

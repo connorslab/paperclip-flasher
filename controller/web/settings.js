@@ -5,11 +5,13 @@ $('extra-pages').innerHTML=`
 <section data-page="system" hidden><div class="columns"><article class="card"><h2>Device</h2><pre id="system-info">Unlock controls to load device information.</pre><label class="check"><input id="identify" type="checkbox"> Identify miner with its LED</label><h2 class="spaced">Change dashboard password</h2><form id="password-form">${field('old-password','Current password','password')}${field('new-password','New password','password')}${field('confirm-password','Confirm new password','password')}<button>Change password</button></form><button id="logout" class="secondary spaced">Lock controls</button></article>
 <article class="card"><h2>Restart</h2><p>A restart briefly interrupts mining. Any unfinished tuning trial is rolled back before mining resumes.</p><button id="reboot" class="secondary">Restart miner</button><h2 class="spaced">Firmware & recovery</h2><p>Paperclip currently supports KDBox 2.2.1 / MCB_V5_4. Stock firmware uploads are blocked here because unverified upgrades can permanently remove SSH access. Use Paperclip Flasher to back up, update, or restore the UI.</p><details><summary>Original maintenance interface</summary><p>For legacy factory reset and firmware maintenance only. These actions can remove your settings or Paperclip safeguards.</p><a href="/legacy.html#/setting-system" target="_blank" rel="noopener">Open original maintenance ↗</a></details><details class="spaced"><summary>Cloud management (optional)</summary><form id="cloud-form"><label class="check"><input id="cloud-enable" type="checkbox"> Enable existing vendor cloud management</label>${field('cloud-key','Management key','password')}<button>Save cloud settings</button></form></details><details id="rgb-panel" class="spaced" hidden><summary>RGB lighting</summary><p>Device-specific lighting configuration.</p><textarea id="rgb-json" rows="6"></textarea><button id="rgb-save">Save lighting</button></details></article></div></section>
 <section data-page="diagnostics" hidden><article class="card"><h2>Diagnostics</h2><div class="actions"><select id="diagnostic-kind" aria-label="Diagnostic report"><option value="icinfo">Chip temperatures & hardware errors</option><option value="minersyslog">Mining log</option><option value="monitorlog">Monitor log</option><option value="syslog">System log</option><option value="kmsg">Kernel log</option><option value="psinfo">Processes</option><option value="meminfo">Memory</option><option value="vsinfo">Versions</option><option value="minerinfo">Mining configuration</option><option value="minerhistory">Mining history</option></select><button id="diagnostic-load">Refresh</button><button id="diagnostic-save" class="secondary">Download</button></div><div id="chips"></div><pre id="diagnostic-output">Unlock controls to load diagnostics.</pre></article></section>`;
-const poolsCard=document.createElement('section');poolsCard.className='card spaced';poolsCard.innerHTML=`<h2>Mining pools</h2><p>The primary pool is tried first, followed by backups in order. Changes save immediately.</p><div id="pools"></div><form id="pool-form">${field('pool-url','Pool URL (stratum+tcp://host:port)')}${field('pool-user','Payout address / worker')}${field('pool-pass','Pool password','password')}<button>Add pool</button></form>`;document.querySelector('[data-page="mining"]').append(poolsCard);
-let poolData=[],wifiData={},cloudData={};
+const poolsCard=document.createElement('section');poolsCard.className='card spaced';poolsCard.innerHTML=`<h2>Mining pools</h2><p>The primary pool is tried first, followed by backups in order. Changes save immediately.</p><p id="pool-state" role="status">Loading saved pools…</p><button id="pool-unlock" hidden>Unlock to edit pools</button><div id="pools"></div><form id="pool-form">${field('pool-url','Pool URL (stratum+tcp://host:port)')}${field('pool-user','Payout address / worker')}${field('pool-pass','Pool password','password')}<button>Add pool</button></form>`;document.querySelector('[data-page="mining"]').prepend(poolsCard);
+const summary=document.createElement('section');summary.className='card';summary.innerHTML='<h2>Active pool</h2><p id="active-pool">Loading saved pools…</p><a href="#mining">View pools & priority →</a>';document.querySelector('[data-page="overview"]').prepend(summary);
+$('pool-unlock').onclick=()=>$('login').showModal();
+let poolData=[],poolsEditable=false,wifiData={},cloudData={};
 function pageName(){const p=location.hash.slice(1);return ['mining','network','system','diagnostics'].includes(p)?p:'overview'}
 async function loadPage(){const page=pageName();document.querySelector("h1").textContent=({overview:"Your miner, at a glance.",mining:"Mining & performance",network:"Network connections",system:"Device settings",diagnostics:"Miner diagnostics"})[page];document.querySelectorAll('[data-page]').forEach(el=>el.hidden=el.dataset.page!==page);document.querySelectorAll('nav a').forEach(el=>el.setAttribute('aria-current',el.hash==='#'+page?'page':'false'));try{
- if(page==='mining'){poolData=await api('pools');renderPools()}
+ if(page==='mining'||page==='overview')await loadPools();
  if(page==='network'){const n=await api('network');$('dhcp').checked=n.useDHCP;$('auto-dns').checked=n.useAuto;for(const [id,k]of [['ip','IPv4addr'],['mask','Subnetmask'],['gateway','Router'],['dns1','DNS1'],['dns2','DNS2']])$(id).value=n.setIP?.[k]||'';networkFields();await loadWifi()}
  if(page==='system'){const v=await api('system');$('system-info').textContent=Object.entries(v).map(([k,v])=>`${k}: ${v}`).join('\n');const settings=await api('device-settings');$('identify').checked=settings.ledcontrol;cloudData=await api('cloud');$('cloud-enable').checked=cloudData.enable;$('cloud-key').value=cloudData.userkey||'';try{const rgb=await api('rgb');$('rgb-panel').hidden=!rgb;if(rgb)$('rgb-json').value=JSON.stringify(rgb,null,2)}catch(e){$('rgb-panel').hidden=true}}
  if(page==='diagnostics')await diagnostic();
@@ -21,6 +23,23 @@ $('network-form').onsubmit=e=>{e.preventDefault();if(!confirm('Apply network cha
 $('network-confirm').onclick=()=>action(()=>api('network-confirm',{}));
 async function loadWifi(){wifiData=await api('wifi');$('wifi-state').textContent=wifiData.exist?'Wireless adapter available.':'No Wi-Fi adapter detected on this miner.';$('wifi-controls').hidden=!wifiData.exist;$('wifi-enable').checked=wifiData.enable;const networks=wifiData.status||[];$('wifi-list').textContent=Array.isArray(networks)?networks.map(n=>n.ssid||'(hidden network)').join('\n'):''}
 $('wifi-enable').onchange=()=>action(async()=>{await api('wifi',{enable:$('wifi-enable').checked});await loadWifi()});$('wifi-scan').onclick=()=>action(async()=>{await api('wifi',{scan:true});await loadWifi()});$('wifi-form').onsubmit=e=>{e.preventDefault();action(async()=>{await api('wifi',{connect:{ssid:$('ssid').value,password:$('wifi-password').value}});$('wifi-password').value='';await loadWifi()})};for(const op of ['disconnect','forget'])$('wifi-'+op).onclick=()=>action(async()=>{await api('wifi',{[op]:{ssid:$('ssid').value}});await loadWifi()});
+async function loadPools(){
+ try{
+  const view=await api('pool-status');poolsEditable=view.editable===true;$('unlock').textContent=poolsEditable?'Controls unlocked':'Unlock controls';
+  const data=poolsEditable?await api('pools'):view.pools;
+  if(!Array.isArray(data))throw Error('Invalid pool response');
+  poolData=data;renderPools();$('pool-unlock').hidden=poolsEditable;$('pool-form').hidden=!poolsEditable;
+  $('pool-state').textContent=poolData.length?(poolsEditable?'':'Read-only · unlock to add, remove, or reorder pools.'):'No pools configured. Unlock and add a pool to start mining.';
+  const active=poolData.filter(p=>p.mining);
+  $('active-pool').textContent=active.length?active.map(p=>`${p.url}\n${p.user}`).join('\n'):poolData.length?'Pools configured; waiting for active-pool telemetry.':'No pools configured.';
+ }catch(e){
+  $('pools').replaceChildren();$('pool-form').hidden=true;
+  const locked=e.status===401;
+  $('pool-unlock').hidden=!locked;
+  const message=locked?'Unlock to view saved pools. Mining continues while controls are locked.':'Could not load saved pools: '+e.message+'. Retrying automatically.';
+  $('pool-state').textContent=message;$('active-pool').textContent=message;
+ }
+}
 function renderPools(){
  $('pools').replaceChildren();
  poolData.sort((a,b)=>(a['pool-priority']??0)-(b['pool-priority']??0));
@@ -34,7 +53,7 @@ function renderPools(){
    ['Move up',i===0,()=>movePool(i,i-1)],
    ['Move down',i===poolData.length-1,()=>movePool(i,i+1)],
    ['Remove',poolData.length===1,async()=>{if(confirm('Remove this pool?'))await api('pool-delete',p)}]
-  ]){const button=document.createElement('button');button.className='secondary';button.textContent=text;button.disabled=disabled;button.setAttribute('aria-label',`${text} pool ${i+1}`);button.onclick=()=>action(async()=>{try{await fn()}finally{poolData=await api('pools');renderPools()}});controls.append(button)}
+  ]){const button=document.createElement('button');button.className='secondary';button.textContent=text;button.disabled=disabled||!poolsEditable;button.setAttribute('aria-label',`${text} pool ${i+1}`);button.onclick=()=>action(async()=>{try{await fn()}finally{poolData=await api('pools');renderPools()}});controls.append(button)}
   $('pools').append(row);
  });
 }
@@ -42,9 +61,9 @@ async function movePool(from,to){const next=poolData.map(p=>({...p}));[next[from
 $('pool-form').onsubmit=e=>{e.preventDefault();action(async()=>{await api('pool-add',{url:$('pool-url').value,user:$('pool-user').value,pass:$('pool-pass').value});$('pool-form').reset();poolData=await api('pools');renderPools()})};
 $('identify').onchange=()=>action(()=>api('identify',{enabled:$('identify').checked}));
 $('password-form').onsubmit=e=>{e.preventDefault();action(async()=>{await api('password',{old:$('old-password').value,new:$('new-password').value,confirm:$('confirm-password').value});$('password-form').reset();$('unlock').textContent='Unlock controls';$('notice').textContent='Password changed. Unlock again with your new password.'})};
-$('logout').onclick=()=>action(async()=>{await api('logout',{});$('unlock').textContent='Unlock controls'});$('reboot').onclick=()=>{if(prompt('Type REBOOT to restart the miner.')==='REBOOT')action(()=>api('reboot',{confirm:'REBOOT'}))};
+$('logout').onclick=()=>action(async()=>{await api('logout',{});$('unlock').textContent='Unlock controls';await loadPools()});$('reboot').onclick=()=>{if(prompt('Type REBOOT to restart the miner.')==='REBOOT')action(()=>api('reboot',{confirm:'REBOOT'}))};
 $('cloud-form').onsubmit=e=>{e.preventDefault();action(()=>api('cloud',{...cloudData,enable:$('cloud-enable').checked,userkey:$('cloud-key').value||null}))};$('rgb-save').onclick=()=>action(()=>api('rgb',JSON.parse($('rgb-json').value)));
 async function diagnostic(){const v=await api('diagnostics?kind='+$('diagnostic-kind').value);$('diagnostic-output').textContent=v.body;$('chips').replaceChildren();if($('diagnostic-kind').value==='icinfo'){const chips=JSON.parse(v.body).drawdata?.flat()||[];chips.forEach(c=>{const card=document.createElement('div');card.className='chip';card.textContent=`Chip ${c.chipindex}\n${c.temp}°C\n${c.hwerr} HW errors`;$('chips').append(card)})}}
 $('diagnostic-load').onclick=()=>action(diagnostic);$('diagnostic-kind').onchange=()=>action(diagnostic);$('diagnostic-save').onclick=()=>{const url=URL.createObjectURL(new Blob([$('diagnostic-output').textContent],{type:'text/plain'}));const a=document.createElement('a');a.href=url;a.download='paperclip-'+$('diagnostic-kind').value+'.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 
-setInterval(async()=>{if(pageName()!=="mining"||busy)return;try{poolData=await api("pools");renderPools()}catch(e){}},10000);
+setInterval(()=>{if(["mining","overview"].includes(pageName())&&!busy)loadPools()},10000);

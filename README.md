@@ -45,7 +45,7 @@ the installer only on a trusted LAN. Installation file transfers use SSH.
 
 - **Overview:** live and average hashrate, history, pool shares, temperatures,
   and hardware-error percentage with the actual nonce denominator.
-- **Mining:** pool management and priority, `blake2b(XBT)` / `blake2s(KDA)`,
+- **Mining:** saved pools and active status remain visible while locked; unlock to edit pools and priority, `blake2b(XBT)` / `blake2s(KDA)`,
   fixed or temperature-based fan control, clock and voltage trials.
 - **Network:** DHCP or static IPv4, gateway, automatic or manual DNS, and Wi-Fi
   controls when an adapter is present. Unconfirmed network changes roll back.
