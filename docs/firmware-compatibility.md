@@ -1,7 +1,7 @@
 # Firmware compatibility
 
 The 0.1.0 prerelease supports original Goldshell KDBox firmware **2.2.1** only.
-The development version supports **2.0.6**, plus **2.0.5, 2.0.7q, 2.0.8, 2.0.9, 2.1.0, 2.1.1, 2.1.3, 2.2.0 and 2.2.3** after installation, accepted-share,
+The 0.1.1 prerelease supports **2.0.6**, plus **2.0.5, 2.0.7q, 2.0.8, 2.0.9, 2.1.0, 2.1.1, 2.1.3, 2.2.0 and 2.2.3** after installation, accepted-share,
 pool-display and reboot tests on an original KDBox / MCB_V5_4.
 
 Other Goldshell models and control boards are not covered by these results.
