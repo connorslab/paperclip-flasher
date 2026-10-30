@@ -122,11 +122,9 @@ class Device:
             self.command('mv /etc/init.d/S99paperclip /usr/config/paperclip/disabled-startup-hook')
         self.command('sync; reboot')
 
-    def install(self, root, password, backup_dir, pool_url, worker, progress=print):
+    def install(self, root, password, backup_dir, progress=print):
         root = Path(root)
         self.inspect()
-        if not pool_url.startswith(('stratum+tcp://', 'stratum+ssl://')) or not worker:
-            raise ValueError('Enter a pool URL and payout address / worker')
         binary = (root / 'build/paperclip-controller').read_bytes()
         if binary[:4] != b'\x7fELF':
             raise RuntimeError('Missing ARM controller build')
@@ -135,15 +133,6 @@ class Device:
             raise RuntimeError('Miner dashboard password was not accepted')
         if self.command('test ! -f /usr/config/paperclip/pending.json && echo clear').strip() != 'clear':
             raise RuntimeError('Finish the active tuning trial first')
-        pools = self.api('/mcb/pools') or []
-        selected = next((p for p in pools if p.get('url') == pool_url and p.get('user') == worker), None)
-        if selected is None:
-            if len(pools) >= 10:
-                raise RuntimeError('Pool list is full; remove an unused pool before changing the primary')
-            selected = {'url': pool_url, 'user': worker, 'pass': 'x'}
-        pools = [selected] + [p for p in pools if p is not selected]
-        for priority, pool in enumerate(pools):
-            pool['pool-priority'] = priority
         progress('Saving a private recovery backup…')
         backup = self.backup(backup_dir)
 
@@ -169,13 +158,11 @@ class Device:
             self.write('/root/yottamc/' + asset.name, asset.read_bytes(), 0o644)
         menu = self.api('/mcb/algosetting')
         menu['algos'] = [{'name': 'blake2s(KDA)', 'id': 0}, {'name': 'blake2b(SC)', 'id': 1}]
-        menu['algo_select'] = 1
         for name in ['/root/settings/algosetting.json', '/usr/config/minerd/settings/algosetting.json', '/usr/config/minerd/settings/.algosetting.json']:
             self.write(name, json.dumps(menu).encode(), 0o644)
         self.api('/mcb/algosetting', menu)
-        self.api('/mcb/pools', pools)
         self.write('/etc/inittab', init.encode(), 0o644)
         self.write('/etc/init.d/S99paperclip', b'#!/bin/sh\ncase "$1" in start) /usr/config/paperclip/boot.sh </dev/null >/tmp/paperclip-start.log 2>&1 & ;; esac\n', 0o755)
         self.command('if pidof controller >/dev/null; then kill -TERM $(pidof controller); else nohup /usr/config/paperclip/boot.sh </dev/null >/tmp/paperclip-start.log 2>&1 & fi; echo started')
-        progress('Installed. Open http://' + self.host + '/ . Recovery backup: ' + str(backup))
+        progress('Installed. Configure mining pools at http://' + self.host + '/ . Recovery backup: ' + str(backup))
         return backup

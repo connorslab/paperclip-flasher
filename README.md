@@ -26,9 +26,14 @@ is provided without warranty; see [LICENSE](LICENSE).
 1. Put your computer and miner on the same trusted LAN.
 2. Open the Windows or Linux `PaperclipFlasher` preview build from this private
    repository's Actions artifacts. Linux may require marking the file executable.
-3. Enter the miner's IP, SSH password, dashboard password, pool URL and worker.
+3. Enter the miner's IP, SSH password, and dashboard password.
 4. Confirm the device's SSH fingerprint. Choose **Back up & install Paperclip**.
 5. Open the miner's normal address, `http://MINER-IP/`.
+6. Unlock **Mining**, add your pool URL and payout address/worker, then select
+   the matching algorithm. For XBT mining, select **blake2b(XBT)**.
+
+Installation preserves existing pools and the selected algorithm. Pool details
+are configured in the dashboard, not in the installer.
 
 The installer makes a private recovery backup under `~/PaperclipFlasher/backups` before changing anything. It does
 not try to upgrade unsupported firmware or recover unknown passwords.

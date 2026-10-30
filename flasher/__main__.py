@@ -9,12 +9,12 @@ from .device import Device
 
 root = tk.Tk()
 root.title('Paperclip Flasher · Private preview')
-root.geometry('650x650')
+root.geometry('650x520')
 frame = ttk.Frame(root, padding=24);frame.pack(fill='both', expand=True)
 ttk.Label(frame, text='Paperclip Flasher', font=('', 22, 'bold')).pack(anchor='w')
 ttk.Label(frame, text='KDBox 2.2.1 · Windows and Linux · no firmware upgrade', wraplength=590).pack(anchor='w', pady=10)
 values = {}
-for key, label, secret in [('host','Miner IP address',False),('ssh','SSH root password',True),('web','Dashboard password',True),('pool','XBT pool URL',False),('worker','Payout address / worker',False)]:
+for key, label, secret in [('host','Miner IP address',False),('ssh','SSH root password',True),('web','Dashboard password',True)]:
     ttk.Label(frame,text=label).pack(anchor='w',pady=(10,2))
     values[key]=tk.StringVar()
     ttk.Entry(frame,textvariable=values[key],show='•' if secret else '').pack(fill='x')
@@ -39,7 +39,7 @@ def run():
             device=Device(data['host'],data['ssh'],confirm_host)
             repo=Path(__file__).resolve().parents[1]
             backup=Path.home()/'PaperclipFlasher'/'backups'/time.strftime('%Y%m%d-%H%M%S')
-            device.install(repo,data['web'],backup,data['pool'],data['worker'],lambda text:events.put(lambda:status.set(text)))
+            device.install(repo,data['web'],backup,lambda text:events.put(lambda:status.set(text)))
             events.put(lambda:webbrowser.open('http://'+data['host']+'/'))
         except Exception as exc:
             msg=str(exc);events.put(lambda:status.set('Stopped: '+msg))
