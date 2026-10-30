@@ -1,4 +1,4 @@
-name: Test and build private preview
+name: Test and build experimental preview
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
