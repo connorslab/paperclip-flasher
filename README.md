@@ -7,7 +7,7 @@ with BLAKE2b mining, cooling controls, and recoverable tuning trials.
 **2.2.1**, board **MCB_V5_4**, ARMv7. Other models and firmware are rejected.
 This installs reversible files over SSH; it does not flash a complete firmware
 image, downgrade a device, or modify its bootloader. The project contains no
-vendor firmware, vendor signing keys, or bundled device passwords.
+vendor firmware or vendor signing keys. The installer does not embed device passwords.
 
 ## Risk and responsibility
 
@@ -35,6 +35,17 @@ is provided without warranty; see [LICENSE](LICENSE).
 
 Installation preserves existing pools and the selected algorithm. Pool details
 are configured in the dashboard, not in the installer.
+
+### SSH credentials for KDBox 2.2.1
+
+These credentials were verified on original KDBox devices running firmware **2.2.1**:
+
+- **Username:** `root`
+- **Password:** `!@#$%123`
+
+Enter this password in the installer's **SSH root password** field. The dashboard
+password is separate. If the SSH password has been changed, use the current one;
+these credentials are not guaranteed to work on other firmware versions.
 
 The installer makes a private recovery backup under `~/PaperclipFlasher/backups` before changing anything. It does
 not try to upgrade unsupported firmware or recover unknown passwords. If SSH is
