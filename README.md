@@ -24,8 +24,9 @@ is provided without warranty; see [LICENSE](LICENSE).
 ## Use it
 
 1. Put your computer and miner on the same trusted LAN.
-2. Open the Windows or Linux `PaperclipFlasher` preview build from this
-   repository's Actions artifacts. Linux may require marking the file executable.
+2. Download the Windows or Linux build from the [0.1.0 prerelease](https://github.com/connorslab/paperclip-flasher/releases/tag/v0.1.0),
+   extract the archive, and open `PaperclipFlasher`. Archive checksums are included
+   in `SHA256SUMS.txt`. Linux may require marking the file executable.
 3. Enter the miner's IP, SSH password, and dashboard password.
 4. Confirm the device's SSH fingerprint. Choose **Back up & install Paperclip**.
 5. Open the miner's normal address, `http://MINER-IP/`.
