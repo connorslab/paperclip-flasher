@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+backups/
+config.json
+*.pem
+*.key
+*.cpb
+*.ius
