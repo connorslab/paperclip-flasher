@@ -3,7 +3,7 @@
 A local installer and replacement dashboard for the original Goldshell KDBox,
 with BLAKE2b mining, cooling controls, and recoverable tuning trials.
 
-**Private experimental preview.** The supported adapter is KDBox firmware
+**Experimental preview.** The supported adapter is KDBox firmware
 **2.2.1**, board **MCB_V5_4**, ARMv7. Other models and firmware are rejected.
 This installs reversible files over SSH; it does not flash a complete firmware
 image, downgrade a device, or modify its bootloader. The project contains no
@@ -24,7 +24,7 @@ is provided without warranty; see [LICENSE](LICENSE).
 ## Use it
 
 1. Put your computer and miner on the same trusted LAN.
-2. Open the Windows or Linux `PaperclipFlasher` preview build from this private
+2. Open the Windows or Linux `PaperclipFlasher` preview build from this
    repository's Actions artifacts. Linux may require marking the file executable.
 3. Enter the miner's IP, SSH password, and dashboard password.
 4. Confirm the device's SSH fingerprint. Choose **Back up & install Paperclip**.

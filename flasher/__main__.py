@@ -8,7 +8,7 @@ import webbrowser
 from .device import Device
 
 root = tk.Tk()
-root.title('Paperclip Flasher · Private preview')
+root.title('Paperclip Flasher · Experimental preview')
 root.geometry('650x520')
 frame = ttk.Frame(root, padding=24);frame.pack(fill='both', expand=True)
 ttk.Label(frame, text='Paperclip Flasher', font=('', 22, 'bold')).pack(anchor='w')
