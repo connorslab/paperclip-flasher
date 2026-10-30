@@ -37,6 +37,7 @@ type Pending struct {
 }
 type Session struct{ Expires time.Time }
 type Controller struct {
+	firmware                                     string
 	mu                                           sync.Mutex
 	dir                                          string
 	backend                                      string
@@ -243,22 +244,9 @@ func (c *Controller) safety() {
 		return
 	}
 	d := v.Data[0]
-	if b, e := c.native("GET", "/dbg/icinfo", nil, false); e == nil {
-		var outer struct {
-			Body string `json:"body"`
-		}
-		var inner struct {
-			Chips [][]map[string]any `json:"drawdata"`
-		}
-		if json.Unmarshal(b, &outer) == nil && json.Unmarshal([]byte(outer.Body), &inner) == nil {
-			peak := 0.0
-			for _, board := range inner.Chips {
-				for _, chip := range board {
-					peak = max(peak, number(chip["temp"]))
-				}
-			}
-			d["peak_temp"] = peak
-		}
+	peak, peakErr := c.chipPeak()
+	if peakErr == nil {
+		d["peak_temp"] = peak
 	}
 	if live, e := liveMiner(); e == nil {
 		d["clock"] = live["clock"]
@@ -266,14 +254,15 @@ func (c *Controller) safety() {
 	}
 	c.device = d
 	temp, ok := temperature(d["temp"])
-	if !ok && time.Now().Before(c.engineGrace) {
+	if (!ok || peakErr != nil) && time.Now().Before(c.engineGrace) {
 		return
 	}
-	if !ok || temp >= 84 || number(d["peak_temp"]) >= 90 {
+	averageLimit, peakLimit := thermalLimits(c.firmware)
+	if !ok || peakErr != nil || temp >= averageLimit || number(d["peak_temp"]) >= peakLimit {
 		if c.pending != nil {
 			_ = c.rollback("Temperature fault")
 		}
-		c.stop("Temperature fault: average >=84 C, chip >=90 C, or missing sensor; mining stopped")
+		c.stop(fmt.Sprintf("Temperature fault: average >=%.0f C, chip >=%.0f C, or missing sensor; mining stopped", averageLimit, peakLimit))
 		return
 	}
 	c.lastGood = time.Now()
@@ -463,7 +452,7 @@ func (c *Controller) handler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case r.URL.Path == "/api/confirm" && r.Method == "POST":
-		if c.pending == nil || time.Now().Before(c.engineGrace) || time.Since(c.started) < 60*time.Second || c.samples < 10 || time.Since(c.lastGood) > 10*time.Second || number(c.device["accepted"]) <= c.baselineAccepted {
+		if c.pending == nil || !time.Now().Before(c.deadline) || time.Now().Before(c.engineGrace) || time.Since(c.started) < 60*time.Second || c.samples < 10 || time.Since(c.lastGood) > 10*time.Second || number(c.device["accepted"]) <= c.baselineAccepted {
 			err = errors.New("wait for 60 seconds of healthy mining and a new accepted share")
 		} else {
 			err = atomicJSON(filepath.Join(c.dir, "approved.json"), c.pending.Candidate)
@@ -580,9 +569,17 @@ func main() {
 		b, e = c.native("GET", "/mcb/status", nil, false)
 		var id map[string]any
 		if e == nil && json.Unmarshal(b, &id) == nil {
-			if id["model"] != "Goldshell-KDBox" || id["firmware"] != "2.2.1" || id["mcbversion"] != "MCB_V5_4" {
+			if _, exists := id["mcbversion"]; !exists {
+				board, err := os.ReadFile("/root/mcbversion")
+				if err != nil {
+					log.Fatal("cannot read board identity")
+				}
+				id["mcbversion"] = strings.TrimSpace(string(board))
+			}
+			if !supportedDevice(id) {
 				log.Fatal("unsupported device")
 			}
+			c.firmware, _ = id["firmware"].(string)
 			if _, e = c.login(c.cfg.AdminPassword); e == nil || c.cfg.FallbackPassword != "" {
 				b, e = c.native("GET", "/mcb/setting", nil, false)
 				var settings map[string]any
@@ -676,4 +673,46 @@ func main() {
 	mux.Handle("/", http.FileServer(http.FS(web)))
 	server := http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 	log.Fatal(server.ListenAndServe())
+}
+
+// chipPeak authenticates when required by newer stock firmware and refreshes
+// expired sessions before treating chip telemetry as unavailable.
+func (c *Controller) chipPeak() (float64, error) {
+	b, err := c.native("GET", "/dbg/icinfo", nil, true)
+	if err != nil {
+		token, loginErr := c.login(c.cfg.AdminPassword)
+		if loginErr != nil {
+			return 0, loginErr
+		}
+		c.token = token
+		b, err = c.native("GET", "/dbg/icinfo", nil, true)
+		if err != nil {
+			return 0, err
+		}
+	}
+	var outer struct {
+		Body string `json:"body"`
+	}
+	var inner struct {
+		Chips [][]map[string]any `json:"drawdata"`
+	}
+	if json.Unmarshal(b, &outer) != nil || json.Unmarshal([]byte(outer.Body), &inner) != nil {
+		return 0, errors.New("invalid chip telemetry")
+	}
+	peak := 0.0
+	count := 0
+	for _, board := range inner.Chips {
+		for _, chip := range board {
+			temp, ok := chip["temp"].(float64)
+			if !ok || temp <= 0 || temp > 200 {
+				return 0, errors.New("missing chip temperature")
+			}
+			peak = max(peak, temp)
+			count++
+		}
+	}
+	if count == 0 {
+		return 0, errors.New("empty chip telemetry")
+	}
+	return peak, nil
 }

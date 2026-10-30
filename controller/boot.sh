@@ -1,5 +1,8 @@
 #!/bin/sh
 umask 077
+# Keep cooling at full output while management and telemetry initialize.
+echo 100 >/sys/class/fans/fan0/lvl
+echo 100 >/sys/class/fans/fan1/lvl
 # Keep management available even when the native controller disables SSH.
 (
  while :; do

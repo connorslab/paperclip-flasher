@@ -12,7 +12,7 @@ root.title('Paperclip Flasher · Experimental preview')
 root.geometry('650x520')
 frame = ttk.Frame(root, padding=24);frame.pack(fill='both', expand=True)
 ttk.Label(frame, text='Paperclip Flasher', font=('', 22, 'bold')).pack(anchor='w')
-ttk.Label(frame, text='KDBox 2.2.1 · Windows and Linux · no firmware upgrade', wraplength=590).pack(anchor='w', pady=10)
+ttk.Label(frame, text='Original KDBox · Windows and Linux · no firmware upgrade', wraplength=590).pack(anchor='w', pady=10)
 values = {}
 for key, label, secret in [('host','Miner IP address',False),('ssh','SSH root password',True),('web','Dashboard password',True)]:
     ttk.Label(frame,text=label).pack(anchor='w',pady=(10,2))

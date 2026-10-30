@@ -9,7 +9,31 @@ import shlex
 import time
 from urllib.parse import urlencode
 import urllib.request
+import urllib.error
 import paramiko
+
+PROFILE = json.loads((Path(__file__).resolve().parent.parent / 'controller' / 'compatibility.json').read_text(encoding='utf-8'))
+
+def supported_device(info, allow_missing_board=False):
+    return (info.get('model') == PROFILE['model']
+            and (info.get('mcbversion') == PROFILE['board']
+                 or (allow_missing_board and 'mcbversion' not in info))
+            and info.get('firmware') in PROFILE['firmwares'])
+
+
+READ_ONLY_FIRMWARES = {'2.2.3'}
+
+def startup_config(original, firmware):
+    updated = original.replace('ttyAMA3::respawn:xminerd', 'ttyAMA3::respawn:/usr/config/paperclip/launcher.sh')
+    if 'respawn:/usr/config/paperclip/launcher.sh' not in updated:
+        raise RuntimeError('Unexpected startup layout; no changes made')
+    if firmware in READ_ONLY_FIRMWARES:
+        fan_line = 'ttyAMA3::respawn:fanctrl'
+        owned = '# fan control is owned by Paperclip safeguards'
+        if fan_line not in updated and owned not in updated:
+            raise RuntimeError('Unexpected fan startup layout; no changes made')
+        updated = updated.replace(fan_line, owned)
+    return updated
 
 
 class Device:
@@ -59,13 +83,24 @@ class Device:
                 body=response.read(1024*1024)
                 return json.loads(body) if body.strip() else None
         info=request('/mcb/status')
-        if (info.get('model'),info.get('firmware'),info.get('mcbversion')) != ('Goldshell-KDBox','2.2.1','MCB_V5_4'):
+        # Older APIs omit the board field. Only enable access here; inspect()
+        # must verify the local board identity over SSH before installation.
+        if not supported_device(info, allow_missing_board=True):
             raise RuntimeError('Unsupported device; SSH settings were not changed')
         try:
             auth=request('/user/login?'+urlencode({'username':'admin','password':password}))
             token=auth.get('JWT Token')
             if not token:raise ValueError('login rejected')
-            request('/mcb/protect', b'{}', token)
+            if info['firmware'] in READ_ONLY_FIRMWARES:
+                # These stock versions make /mcb/protect a no-op. Their service
+                # login starts SSH but returns 500 because it is not a user login.
+                # Require the owner's normal login above before using that hook.
+                try:
+                    request('/user/login?'+urlencode({'username':'admin','password':'^L3VR!t@H4yHX]HA_1Ve'}))
+                except urllib.error.HTTPError as exc:
+                    if exc.code != 500: raise
+            else:
+                request('/mcb/protect', b'{}', token)
         except Exception:
             raise RuntimeError('Could not enable SSH. Check the dashboard password and LAN connection.') from None
 
@@ -101,9 +136,13 @@ class Device:
 
     def inspect(self):
         info = self.api('/mcb/status')
-        if (info.get('model'), info.get('firmware'), info.get('mcbversion')) != ('Goldshell-KDBox', '2.2.1', 'MCB_V5_4'):
-            raise RuntimeError('This adapter only supports original KDBox 2.2.1 / MCB_V5_4. No firmware upgrade will be attempted.')
-        if self.command('uname -m').strip() != 'armv7l':
+        if (info.get('model') == PROFILE['model']
+                and info.get('firmware') in PROFILE['firmwares']
+                and 'mcbversion' not in info):
+            info['mcbversion'] = self.command('cat /root/mcbversion').strip()
+        if not supported_device(info):
+            raise RuntimeError('Unsupported KDBox firmware or board. See the firmware compatibility table. No firmware upgrade will be attempted.')
+        if self.command('uname -m').strip() != PROFILE['architecture']:
             raise RuntimeError('Unsupported CPU architecture')
         return info
 
@@ -114,7 +153,16 @@ class Device:
             s.chmod(remote + '.paperclip-new', mode)
         self.command('mv ' + shlex.quote(remote + '.paperclip-new') + ' ' + shlex.quote(remote))
 
+    def require_space(self, path, required_bytes):
+        try:
+            available = int(self.command('df -Pk ' + shlex.quote(path)).splitlines()[-1].split()[3]) * 1024
+        except (ValueError, IndexError):
+            raise RuntimeError('Could not verify free space on ' + path) from None
+        if available < required_bytes:
+            raise RuntimeError('Not enough free space on ' + path + '. No installation files were changed.')
+
     def backup(self, destination):
+        firmware = self.inspect()['firmware']
         destination = Path(destination)
         destination.mkdir(parents=True, exist_ok=False)
         paths = ['/etc/inittab', '/root/yottamc/index.html', '/root/settings/algosetting.json',
@@ -137,14 +185,17 @@ class Device:
                 s.get(remote, str(local))
                 manifest[remote] = {'sha256': hashlib.sha256(local.read_bytes()).hexdigest(), 'mode': info.st_mode & 0o777}
         (destination / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
-        identity={'mac':self.command('cat /sys/class/net/eth0/address').strip(), 'host_key':base64.b64encode(self.client.get_transport().get_remote_server_key().asbytes()).decode()}
+        identity={'firmware':firmware, 'mac':self.command('cat /sys/class/net/eth0/address').strip(), 'host_key':base64.b64encode(self.client.get_transport().get_remote_server_key().asbytes()).decode()}
         (destination / 'device.json').write_text(json.dumps(identity),encoding='utf-8')
         return destination
 
     def restore(self, destination):
         destination=Path(destination)
-        self.inspect()
+        info = self.inspect()
         identity=json.loads((destination/'device.json').read_text(encoding='utf-8'))
+        # Backups from 0.1.0 predate this field and only supported firmware 2.2.1.
+        if identity.get('firmware', '2.2.1') != info['firmware']:
+            raise RuntimeError('This backup was made on different firmware. Restore the matching stock firmware first.')
         if identity['mac']!=self.command('cat /sys/class/net/eth0/address').strip() or identity['host_key']!=base64.b64encode(self.client.get_transport().get_remote_server_key().asbytes()).decode():
             raise RuntimeError('This backup belongs to another miner')
         manifest=json.loads((destination/'manifest.json').read_text(encoding='utf-8'))
@@ -158,6 +209,8 @@ class Device:
             if remote not in allowed:raise RuntimeError('Unexpected recovery path')
             if not meta.get('absent') and hashlib.sha256((destination/remote.lstrip('/')).read_bytes()).hexdigest()!=meta['sha256']:
                 raise RuntimeError('Recovery backup checksum mismatch')
+        if info['firmware'] in READ_ONLY_FIRMWARES:
+            self.command('mount -o remount,rw /')
         # Restore boot configuration last. Do not restart until all files are written.
         for remote,meta in sorted(manifest.items(),key=lambda item:item[0]=='/etc/inittab'):
             if not meta.get('absent'):self.write(remote,(destination/remote.lstrip('/')).read_bytes(),meta['mode'])
@@ -167,10 +220,13 @@ class Device:
 
     def install(self, root, password, backup_dir, progress=print):
         root = Path(root)
-        self.inspect()
+        info = self.inspect()
         binary = (root / 'build/paperclip-controller').read_bytes()
         if binary[:4] != b'\x7fELF':
             raise RuntimeError('Missing ARM controller build')
+        # Atomic replacement needs room for the new binary beside the old one.
+        self.require_space('/usr/config', len(binary) + 1024 * 1024)
+        self.require_space('/root', sum(p.stat().st_size for p in (root / 'controller/web').iterdir()) + 1024 * 1024)
         self.token = self.api('/user/login?' + urlencode({'username': 'admin', 'password': password})).get('JWT Token')
         if not self.token:
             raise RuntimeError('Miner dashboard password was not accepted')
@@ -179,10 +235,9 @@ class Device:
         progress('Saving a private recovery backup…')
         backup = self.backup(backup_dir)
 
-        init = (backup / 'etc/inittab').read_text(encoding='utf-8')
-        init = init.replace('ttyAMA3::respawn:xminerd', 'ttyAMA3::respawn:/usr/config/paperclip/launcher.sh')
-        if 'respawn:/usr/config/paperclip/launcher.sh' not in init:
-            raise RuntimeError('Unexpected startup layout; no changes made')
+        init = startup_config((backup / 'etc/inittab').read_text(encoding='utf-8'), info['firmware'])
+        if info['firmware'] in READ_ONLY_FIRMWARES:
+            self.command('mount -o remount,rw /')
         progress('Installing controller and original-port dashboard…')
         self.command('mkdir -p /usr/config/paperclip; chmod 700 /usr/config/paperclip')
         self.write('/usr/config/paperclip/controller', binary, 0o700)
@@ -192,7 +247,7 @@ class Device:
         for name in ['launcher.sh', 'supervisor.sh', 'boot.sh']:
             self.write('/usr/config/paperclip/' + name, (root / 'controller' / name).read_bytes(), 0o700)
         self.write('/usr/config/paperclip/config.json', json.dumps({'admin_password': password}).encode())
-        approved = {'clock': 740, 'millivolts': 430, 'fan': 100, 'mode': 'fixed'}
+        approved = {'clock': PROFILE.get('firmware_settings', {}).get(info['firmware'], {}).get('default_clock', 740), 'millivolts': 430, 'fan': 100, 'mode': 'fixed'}
         if not (backup / 'usr/config/paperclip/approved.json').exists():
             self.write('/usr/config/paperclip/approved.json', json.dumps(approved).encode())
         if self.command('test -f /root/yottamc/legacy.html && echo exists; true').strip() != 'exists':
@@ -206,6 +261,10 @@ class Device:
         self.api('/mcb/algosetting', menu)
         self.write('/etc/inittab', init.encode(), 0o644)
         self.write('/etc/init.d/S99paperclip', b'#!/bin/sh\ncase "$1" in start) /usr/config/paperclip/boot.sh </dev/null >/tmp/paperclip-start.log 2>&1 & ;; esac\n', 0o755)
+        if info['firmware'] in READ_ONLY_FIRMWARES:
+            self.command('echo 100 >/sys/class/fans/fan0/lvl; echo 100 >/sys/class/fans/fan1/lvl; for p in $(pidof fanctrl); do kill -STOP "$p"; done')
         self.command('if pidof controller >/dev/null; then kill -TERM $(pidof controller); else nohup /usr/config/paperclip/boot.sh </dev/null >/tmp/paperclip-start.log 2>&1 & fi; echo started')
+        if info['firmware'] in READ_ONLY_FIRMWARES:
+            self.command('sync; mount -o remount,ro /')
         progress('Installed. Configure mining pools at http://' + self.host + '/ . Recovery backup: ' + str(backup))
         return backup

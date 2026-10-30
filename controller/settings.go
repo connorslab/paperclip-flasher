@@ -84,12 +84,28 @@ func (c *Controller) settings(w http.ResponseWriter, r *http.Request) bool {
 			jsonReply(w, 400, map[string]string{"error": "unknown diagnostic"})
 			return true
 		}
-		res, e := c.client.Get(c.backend + "/dbg/" + name)
+		token, e := c.login(c.cfg.AdminPassword)
+		if e != nil {
+			jsonReply(w, 502, map[string]string{"error": "diagnostic authentication failed"})
+			return true
+		}
+		c.token = token
+		req, e := http.NewRequest("GET", c.backend+"/dbg/"+name, nil)
+		if e != nil {
+			jsonReply(w, 502, map[string]string{"error": "diagnostics unavailable"})
+			return true
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		res, e := c.client.Do(req)
 		if e != nil {
 			jsonReply(w, 502, map[string]string{"error": "diagnostics unavailable"})
 			return true
 		}
 		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			jsonReply(w, 502, map[string]string{"error": "diagnostics unavailable"})
+			return true
+		}
 		var v struct {
 			Body string `json:"body"`
 		}

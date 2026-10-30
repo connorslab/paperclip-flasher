@@ -121,3 +121,79 @@ func TestBootRollbackRetriesWithoutLatchingFault(t *testing.T) {
 		t.Fatal("boot retry failed")
 	}
 }
+
+// Confirmation must not race the periodic safety loop after the deadline.
+func TestExpiredTrialCannotBeConfirmed(t *testing.T) {
+	dir := t.TempDir()
+	old := Tuning{430, 600, 100, "fixed"}
+	c := &Controller{dir: dir, approved: old, pending: &Pending{old, Tuning{430, 625, 100, "fixed"}},
+		sessions: map[string]Session{"test": {time.Now().Add(time.Minute)}},
+		lastGood: time.Now(), started: time.Now().Add(-4 * time.Minute), deadline: time.Now().Add(-time.Second),
+		samples: 20, baselineAccepted: 1, device: map[string]any{"accepted": float64(2)}}
+	req := httptest.NewRequest("POST", "http://miner/api/confirm", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "paperclip", Value: "test"})
+	w := httptest.NewRecorder()
+	c.handler(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expired trial confirmed: %d", w.Code)
+	}
+	if c.approved != old || c.pending == nil {
+		t.Fatal("expired confirmation changed approved settings")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "approved.json")); !os.IsNotExist(err) {
+		t.Fatal("expired confirmation wrote settings")
+	}
+}
+
+func TestChipTelemetryRefreshAndMissingSensors(t *testing.T) {
+	body := `{"drawdata":[[{"temp":72},{"temp":79}]]}`
+	logins := 0
+	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/login" {
+			logins++
+			w.Write([]byte(`{"JWT Token":"fresh"}`))
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer fresh" {
+			w.WriteHeader(401)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"body": body})
+	}))
+	defer native.Close()
+	c := &Controller{backend: native.URL, client: native.Client(), token: "expired"}
+	peak, err := c.chipPeak()
+	if err != nil || peak != 79 || logins != 1 {
+		t.Fatalf("peak=%v err=%v logins=%d", peak, err, logins)
+	}
+	for _, bad := range []string{`{"drawdata":[]}`, `{"drawdata":[[{}]]}`, `{"drawdata":[[{"temp":0}]]}`, `not-json`} {
+		body = bad
+		if _, err = c.chipPeak(); err == nil {
+			t.Fatalf("accepted invalid telemetry: %s", bad)
+		}
+	}
+}
+
+func TestDiagnosticsUsesNativeAuthentication(t *testing.T) {
+	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/login" {
+			w.Write([]byte(`{"JWT Token":"fresh"}`))
+			return
+		}
+		if r.URL.Path != "/dbg/icinfo" || r.Header.Get("Authorization") != "Bearer fresh" {
+			w.WriteHeader(401)
+			return
+		}
+		w.Write([]byte(`{"body":"chip temperatures"}`))
+	}))
+	defer native.Close()
+	c := &Controller{backend: native.URL, client: native.Client(), sessions: map[string]Session{"test": {time.Now().Add(time.Minute)}}}
+	r := httptest.NewRequest("GET", "http://miner/api/diagnostics?kind=icinfo", nil)
+	r.AddCookie(&http.Cookie{Name: "paperclip", Value: "test"})
+	w := httptest.NewRecorder()
+	c.handler(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "chip temperatures") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

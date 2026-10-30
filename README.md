@@ -3,11 +3,13 @@
 A local installer and replacement dashboard for the original Goldshell KDBox,
 with BLAKE2b mining, cooling controls, and recoverable tuning trials.
 
-**Experimental preview.** The supported adapter is KDBox firmware
-**2.2.1**, board **MCB_V5_4**, ARMv7. Other models and firmware are rejected.
+**Experimental preview.** The adapter supports the original KDBox, board
+**MCB_V5_4**, ARMv7. The **0.1.0 download supports firmware 2.2.1**; see the
+[firmware compatibility table](docs/firmware-compatibility.md) for additional
+versions tested in development. Unsupported models and firmware are rejected.
 This installs reversible files over SSH; it does not flash a complete firmware
 image, downgrade a device, or modify its bootloader. The project contains no
-vendor firmware or vendor signing keys. The installer does not embed device passwords.
+vendor firmware or vendor signing keys. Your SSH and dashboard passwords are entered locally.
 
 ## Risk and responsibility
 
@@ -36,16 +38,23 @@ is provided without warranty; see [LICENSE](LICENSE).
 Installation preserves existing pools and the selected algorithm. Pool details
 are configured in the dashboard, not in the installer.
 
-### SSH credentials for KDBox 2.2.1
+### Stock SSH credentials
 
-These credentials were verified on original KDBox devices running firmware **2.2.1**:
+Use username **`root`** and the password for your installed stock firmware:
 
-- **Username:** `root`
-- **Password:** `!@#$%123`
+| Firmware | SSH password |
+| --- | --- |
+| 2.0.5–2.0.8 | `19283746` |
+| 2.0.9–2.2.1 | `!@#$%123` |
+| 2.2.3–2.2.4 | `yuiop^&*` |
 
-Enter this password in the installer's **SSH root password** field. The dashboard
-password is separate. If the SSH password has been changed, use the current one;
-these credentials are not guaranteed to work on other firmware versions.
+These passwords match the available official firmware images. See the
+[compatibility table](docs/firmware-compatibility.md) for versions that have also
+passed installation and mining tests. A known password alone does not mean the
+installer supports that firmware.
+
+Enter it in **SSH root password**. The dashboard password is separate. If the
+SSH password has been changed, use the current one.
 
 The installer makes a private recovery backup under `~/PaperclipFlasher/backups` before changing anything. It does
 not try to upgrade unsupported firmware or recover unknown passwords. If SSH is
@@ -92,7 +101,8 @@ Thermal shutdown remains enabled. Missing temperatures, low fan RPM, average
 temperature at 84°C, or a reported chip temperature at 90°C stops mining and
 retains management access. Trials also roll back at lower temperature limits or
 an excessive invalid-nonce rate. These are conservative software limits, not a
-guarantee against hardware failure. Device-specific cooling still matters.
+guarantee against hardware failure. Firmware 2.0.6 uses tighter shutdown limits
+(80°C average / 85°C chip). Device-specific cooling still matters.
 
 ## Build from source
 
