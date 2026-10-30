@@ -8,7 +8,7 @@ $('theme').onclick=()=>{let t=document.documentElement.dataset.theme==='dark'?'l
 
 $('unlock').onclick=()=>$('login').showModal();$('cancel').onclick=()=>$('login').close();$('fan').oninput=()=>$('fan-value').textContent=$('fan').value+'%';
 
-async function api(path,data){let r=await fetch(`http://${location.hostname}:8088/api/`+path,{credentials:'include',method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});let v=await r.json();if(!r.ok)throw Error(v.error||'Request failed');return v}
+async function api(path,data){let r=await fetch(`http://${location.hostname}:8088/api/`+path,{credentials:'include',method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});let v=await r.json();if(!r.ok){if(r.status===401)$('unlock').textContent='Unlock controls';throw Error(v.error||'Request failed')}if(!['status','history','logout'].includes(path))$('unlock').textContent='Controls unlocked';return v}
 
 async function action(fn){if(busy)return;busy=true;try{await fn();await refresh()}catch(e){$('notice').textContent=e.message}finally{busy=false}}
 

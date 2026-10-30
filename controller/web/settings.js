@@ -27,7 +27,7 @@ function renderPools(){
  poolData.forEach((p,i)=>{
   const row=document.createElement('article');row.className='pool';
   const title=document.createElement('strong');title.textContent=`${i+1} · ${i===0?'Primary':'Backup '+i}`;
-  const badge=document.createElement('span');badge.className='pool-status';badge.textContent=!p.telemetry_available?'Updating':p.mining?'Mining here':p.connected?'Standby':'Connecting';
+  const badge=document.createElement('span');badge.className='pool-status'+(p.mining?' is-mining':'');badge.textContent=!p.telemetry_available?'Updating':p.mining?'Mining here':p.connected?'Standby':'Connecting';
   const label=document.createElement('p');label.textContent=`${p.url}\n${p.user}`;
   const controls=document.createElement('div');controls.className='actions';row.append(title,badge,label,controls);
   for(const [text,disabled,fn] of [

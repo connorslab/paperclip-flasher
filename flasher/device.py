@@ -135,6 +135,15 @@ class Device:
             raise RuntimeError('Miner dashboard password was not accepted')
         if self.command('test ! -f /usr/config/paperclip/pending.json && echo clear').strip() != 'clear':
             raise RuntimeError('Finish the active tuning trial first')
+        pools = self.api('/mcb/pools') or []
+        selected = next((p for p in pools if p.get('url') == pool_url and p.get('user') == worker), None)
+        if selected is None:
+            if len(pools) >= 10:
+                raise RuntimeError('Pool list is full; remove an unused pool before changing the primary')
+            selected = {'url': pool_url, 'user': worker, 'pass': 'x'}
+        pools = [selected] + [p for p in pools if p is not selected]
+        for priority, pool in enumerate(pools):
+            pool['pool-priority'] = priority
         progress('Saving a private recovery backup…')
         backup = self.backup(backup_dir)
 
@@ -164,7 +173,7 @@ class Device:
         for name in ['/root/settings/algosetting.json', '/usr/config/minerd/settings/algosetting.json', '/usr/config/minerd/settings/.algosetting.json']:
             self.write(name, json.dumps(menu).encode(), 0o644)
         self.api('/mcb/algosetting', menu)
-        self.api('/mcb/pools', [{'url': pool_url, 'user': worker, 'pass': 'x', 'pool-priority': 0}])
+        self.api('/mcb/pools', pools)
         self.write('/etc/inittab', init.encode(), 0o644)
         self.write('/etc/init.d/S99paperclip', b'#!/bin/sh\ncase "$1" in start) /usr/config/paperclip/boot.sh </dev/null >/tmp/paperclip-start.log 2>&1 & ;; esac\n', 0o755)
         self.command('if pidof controller >/dev/null; then kill -TERM $(pidof controller); else nohup /usr/config/paperclip/boot.sh </dev/null >/tmp/paperclip-start.log 2>&1 & fi; echo started')
