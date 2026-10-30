@@ -12,8 +12,8 @@ expected local ports. No remote scripts, analytics, or cloud account are used.
 Do not expose these legacy HTTP services directly to the Internet.
 
 `approved.json` is the last confirmed clock/voltage/fan profile. `pending.json`
-is written atomically before a trial. On startup it is rolled back before the
-launcher is released. `halted.json` retains a thermal/fan/telemetry stop across
+is written atomically before a trial. At startup the launcher restores the old hardware parameters on disk before
+starting the native mining supervisor; the controller then completes API recovery. `halted.json` retains a thermal/fan/telemetry stop across
 controller restarts; inspect the miner and use **Resume confirmed settings**.
 `network-pending.json` similarly retains the previous network configuration.
 
@@ -35,7 +35,10 @@ resuming. Do not delete `pending.json` to force a failed trial through.
 
 ## Restoring the original dashboard
 
-Keep your backup directory. Restore its `root/yottamc/index.html` and
+Use **Restore a recovery backup** in the installer. It checks the device MAC, SSH
+host key, and backup checksums before restoring and restarting the miner.
+
+For manual recovery, keep your backup directory. Restore its `root/yottamc/index.html` and
 `etc/inittab` to the matching device paths with their recorded permissions. Remove
 the Paperclip startup hook only after restoring the original startup entry. Then
 restart the device. The installer never modifies the bootloader or full firmware.

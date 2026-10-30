@@ -9,6 +9,18 @@ This installs reversible files over SSH; it does not flash a complete firmware
 image, downgrade a device, or modify its bootloader. The project contains no
 vendor firmware, vendor signing keys, or bundled device passwords.
 
+## Risk and responsibility
+
+**Use this software at your own risk.** Firmware-related changes can brick a
+device, including changes to startup files and mining software that do not flash
+a full firmware image. Installation, interrupted updates, incompatible settings,
+and tuning can cause loss of access, lost mining income, or permanent hardware
+damage. Recovery may require specialist tools or may not be possible.
+
+Back up your miner before making changes. Automatic rollback and thermal checks
+reduce risk but cannot guarantee recovery or prevent every failure. This software
+is provided without warranty; see [LICENSE](LICENSE).
+
 ## Use it
 
 1. Put your computer and miner on the same trusted LAN.
@@ -18,7 +30,7 @@ vendor firmware, vendor signing keys, or bundled device passwords.
 4. Confirm the device's SSH fingerprint. Choose **Back up & install Paperclip**.
 5. Open the miner's normal address, `http://MINER-IP/`.
 
-The installer makes a private recovery backup before changing anything. It does
+The installer makes a private recovery backup under `~/PaperclipFlasher/backups` before changing anything. It does
 not try to upgrade unsupported firmware or recover unknown passwords.
 
 ## Dashboard
@@ -34,7 +46,6 @@ not try to upgrade unsupported firmware or recover unknown passwords.
 - **Diagnostics:** per-chip temperatures and errors, mining/kernel/system logs,
   process and memory information, with downloads.
 
-The orange Paperclip SVG is used in light mode, dark mode, and the favicon.
 The original page remains available as `legacy.html` for advanced maintenance.
 Unverified stock firmware uploads are deliberately excluded from the new UI:
 some versions remove SSH access. Factory reset/legacy maintenance bypasses the
@@ -52,7 +63,8 @@ Paperclip control flow and can remove settings; use the recovery guide first.
 The controller records the previous settings before applying a trial, reloads
 the mining engine, and checks its **live** clock and voltage. Expiry, unstable
 trial telemetry, or a controller restart restores the previous settings. Startup
-holds the mining supervisor until recovery is complete. A separate process
+restores the hardware parameters on disk before launching the mining supervisor,
+then completes recovery through the native API. A separate process
 watchdog covers a stuck controller. A whole-system freeze may still require a
 power cycle; the pending trial is recovered at the next boot.
 

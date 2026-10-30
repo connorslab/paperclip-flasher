@@ -76,7 +76,9 @@ class Device:
         destination.mkdir(parents=True, exist_ok=False)
         paths = ['/etc/inittab', '/root/yottamc/index.html', '/root/settings/algosetting.json',
                  '/usr/config/minerd/settings/algosetting.json', '/usr/config/minerd/settings/.algosetting.json',
-                 '/usr/config/minerd/settings/cpbsetting.json', '/usr/config/bfgminer/bfgminer.json',
+                 '/usr/config/minerd/settings/cpbsetting.json', '/usr/config/minerd/settings/.cpbsetting.json',
+                 '/usr/config/minerd/settings/pools.json', '/usr/config/minerd/settings/.pools.json',
+                 '/usr/config/bfgminer/.bfgminer.json', '/usr/config/bfgminer/bfgminer.json',
                  '/etc/init.d/S99paperclip', '/usr/config/paperclip/config.json',
                  '/usr/config/paperclip/approved.json']
         manifest = {}
@@ -92,7 +94,33 @@ class Device:
                 s.get(remote, str(local))
                 manifest[remote] = {'sha256': hashlib.sha256(local.read_bytes()).hexdigest(), 'mode': info.st_mode & 0o777}
         (destination / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+        identity={'mac':self.command('cat /sys/class/net/eth0/address').strip(), 'host_key':base64.b64encode(self.client.get_transport().get_remote_server_key().asbytes()).decode()}
+        (destination / 'device.json').write_text(json.dumps(identity),encoding='utf-8')
         return destination
+
+    def restore(self, destination):
+        destination=Path(destination)
+        self.inspect()
+        identity=json.loads((destination/'device.json').read_text(encoding='utf-8'))
+        if identity['mac']!=self.command('cat /sys/class/net/eth0/address').strip() or identity['host_key']!=base64.b64encode(self.client.get_transport().get_remote_server_key().asbytes()).decode():
+            raise RuntimeError('This backup belongs to another miner')
+        manifest=json.loads((destination/'manifest.json').read_text(encoding='utf-8'))
+        allowed={'/etc/inittab','/root/yottamc/index.html','/root/settings/algosetting.json',
+                 '/usr/config/minerd/settings/algosetting.json','/usr/config/minerd/settings/.algosetting.json',
+                 '/usr/config/minerd/settings/cpbsetting.json','/usr/config/minerd/settings/.cpbsetting.json',
+                 '/usr/config/minerd/settings/pools.json','/usr/config/minerd/settings/.pools.json',
+                 '/usr/config/bfgminer/.bfgminer.json','/usr/config/bfgminer/bfgminer.json',
+                 '/etc/init.d/S99paperclip','/usr/config/paperclip/config.json','/usr/config/paperclip/approved.json'}
+        for remote,meta in manifest.items():
+            if remote not in allowed:raise RuntimeError('Unexpected recovery path')
+            if not meta.get('absent') and hashlib.sha256((destination/remote.lstrip('/')).read_bytes()).hexdigest()!=meta['sha256']:
+                raise RuntimeError('Recovery backup checksum mismatch')
+        # Restore boot configuration last. Do not restart until all files are written.
+        for remote,meta in sorted(manifest.items(),key=lambda item:item[0]=='/etc/inittab'):
+            if not meta.get('absent'):self.write(remote,(destination/remote.lstrip('/')).read_bytes(),meta['mode'])
+        if manifest.get('/etc/init.d/S99paperclip',{}).get('absent'):
+            self.command('mv /etc/init.d/S99paperclip /usr/config/paperclip/disabled-startup-hook')
+        self.command('sync; reboot')
 
     def install(self, root, password, backup_dir, pool_url, worker, progress=print):
         root = Path(root)
@@ -109,7 +137,7 @@ class Device:
             raise RuntimeError('Finish the active tuning trial first')
         progress('Saving a private recovery backup…')
         backup = self.backup(backup_dir)
-	
+
         init = (backup / 'etc/inittab').read_text(encoding='utf-8')
         init = init.replace('ttyAMA3::respawn:xminerd', 'ttyAMA3::respawn:/usr/config/paperclip/launcher.sh')
         if 'respawn:/usr/config/paperclip/launcher.sh' not in init:
@@ -138,7 +166,7 @@ class Device:
         self.api('/mcb/algosetting', menu)
         self.api('/mcb/pools', [{'url': pool_url, 'user': worker, 'pass': 'x', 'pool-priority': 0}])
         self.write('/etc/inittab', init.encode(), 0o644)
-        self.write('/etc/init.d/S99paperclip', b'#!/bin/sh\n[ "$1" = start ] && /usr/config/paperclip/boot.sh &\n', 0o755)
+        self.write('/etc/init.d/S99paperclip', b'#!/bin/sh\ncase "$1" in start) /usr/config/paperclip/boot.sh </dev/null >/tmp/paperclip-start.log 2>&1 & ;; esac\n', 0o755)
         self.command('if pidof controller >/dev/null; then kill -TERM $(pidof controller); else nohup /usr/config/paperclip/boot.sh </dev/null >/tmp/paperclip-start.log 2>&1 & fi; echo started')
         progress('Installed. Open http://' + self.host + '/ . Recovery backup: ' + str(backup))
         return backup

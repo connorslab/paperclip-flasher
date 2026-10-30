@@ -56,6 +56,7 @@ type Controller struct {
 	sessions                                     map[string]Session
 	device                                       map[string]any
 	networkPending                               *NetworkTrial
+	recovering                                   bool
 }
 
 func atomicJSON(path string, value any) error {
@@ -162,16 +163,22 @@ func (c *Controller) rollback(reason string) error {
 	}
 	previous := c.pending.Previous
 	if err := c.apply(previous); err != nil {
-		c.stop("Rollback failed; mining stopped: " + err.Error())
+		if !c.recovering {
+			c.stop("Rollback failed; mining stopped: " + err.Error())
+		}
 		return err
 	}
 	// Persist approved before clearing pending. An interrupted rollback retries safely.
 	if err := atomicJSON(filepath.Join(c.dir, "approved.json"), previous); err != nil {
-		c.stop("Cannot save rollback")
+		if !c.recovering {
+			c.stop("Cannot save rollback")
+		}
 		return err
 	}
 	if err := os.Remove(filepath.Join(c.dir, "pending.json")); err != nil {
-		c.stop("Cannot clear pending trial")
+		if !c.recovering {
+			c.stop("Cannot clear pending trial")
+		}
 		return err
 	}
 	c.approved = previous
@@ -409,7 +416,7 @@ func (c *Controller) handler(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = t.Validate(c.approved)
 		}
-		if err == nil && (c.pending != nil || c.halted || time.Since(c.lastGood) > 10*time.Second) {
+		if err == nil && (c.pending != nil || c.halted || c.device == nil || number(c.device["nonces"]) < 1 || time.Since(c.lastGood) > 10*time.Second) {
 			err = errors.New("healthy miner with no pending trial required")
 		}
 		if err == nil {
@@ -503,8 +510,15 @@ func (c *Controller) handler(w http.ResponseWriter, r *http.Request) {
 }
 func main() {
 	dir := flag.String("state", "/usr/config/paperclip", "private state directory")
+	preflight := flag.Bool("preflight", false, "recover disk parameters before native mining startup")
 	listen := flag.String("listen", ":8088", "listen address")
 	flag.Parse()
+	if *preflight {
+		if e := diskRecover(*dir, "/usr/config/minerd/settings", "/usr/config/bfgminer"); e != nil {
+			log.Fatal(e)
+		}
+		return
+	}
 	c := &Controller{dir: *dir, backend: "http://127.0.0.1", engineGrace: time.Now().Add(180 * time.Second), client: &http.Client{Timeout: 4 * time.Second}, boot: time.Now(), lastGood: time.Now(), sessions: map[string]Session{}, message: "Starting"}
 	c.reload = func() error {
 		return exec.Command("/bin/sh", "-c", "for p in $(pidof intminer kdaminer); do kill -TERM \"$p\"; done; true").Run()
@@ -545,8 +559,14 @@ func main() {
 			if id["model"] != "Goldshell-KDBox" || id["firmware"] != "2.2.1" || id["mcbversion"] != "MCB_V5_4" {
 				log.Fatal("unsupported device")
 			}
-			ready = true
-			break
+			if _, e = c.login(c.cfg.AdminPassword); e == nil || c.cfg.FallbackPassword != "" {
+				b, e = c.native("GET", "/mcb/setting", nil, false)
+				var settings map[string]any
+				if e == nil && json.Unmarshal(b, &settings) == nil && settings["manualPowerplan"] != nil {
+					ready = true
+					break
+				}
+			}
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -576,8 +596,19 @@ func main() {
 		}
 	}
 	if c.pending != nil {
-		if e = c.rollback("Interrupted trial recovered at startup"); e != nil {
-			log.Fatal("pending rollback failed")
+		c.recovering = true
+		for i := 0; i < 15; i++ {
+			e = c.rollback("Interrupted trial recovered at startup")
+			if e == nil {
+				break
+			}
+			log.Print("Waiting for recovery API: ", e)
+			time.Sleep(2 * time.Second)
+		}
+		c.recovering = false
+		if e != nil {
+			c.stop("Boot rollback failed; mining held off")
+			log.Fatal("pending rollback failed: ", e)
 		}
 	}
 	if _, e = os.Stat(filepath.Join(*dir, "halted.json")); e == nil {

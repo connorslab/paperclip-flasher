@@ -2,7 +2,7 @@ import queue
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 import webbrowser
 from .device import Device
@@ -31,7 +31,8 @@ def confirm_host(host,fingerprint):
 
 def run():
     data={k:(v.get() if k in ['ssh','web'] else v.get().strip()) for k,v in values.items()}
-    button.configure(state='disabled')
+    if not messagebox.askyesno('Device modification risk','Use at your own risk. Firmware-related changes can brick the miner or damage hardware. Rollback cannot guarantee recovery. Back up and install anyway?'):return
+    button.configure(state='disabled');restore_button.configure(state='disabled')
     def work():
         device=None
         try:
@@ -44,10 +45,25 @@ def run():
             msg=str(exc);events.put(lambda:status.set('Stopped: '+msg))
         finally:
             if device:device.close()
-            events.put(lambda:button.configure(state='normal'))
+            events.put(lambda:(button.configure(state='normal'),restore_button.configure(state='normal')))
     threading.Thread(target=work,daemon=True).start()
 
 button=ttk.Button(frame,text='Back up & install Paperclip',command=run);button.pack(anchor='w')
+def restore():
+    folder=filedialog.askdirectory(title='Choose this miner’s recovery backup')
+    if not folder or not messagebox.askyesno('Restore backup','Restore this miner’s saved configuration and restart it?'):return
+    host=values['host'].get().strip();password=values['ssh'].get();button.configure(state='disabled');restore_button.configure(state='disabled')
+    def work():
+        device=None
+        try:
+            device=Device(host,password,confirm_host);device.restore(folder);events.put(lambda:status.set('Backup restored. Miner is restarting.'))
+        except Exception as exc:
+            msg=str(exc);events.put(lambda:status.set('Restore stopped: '+msg))
+        finally:
+            if device:device.close()
+            events.put(lambda:(button.configure(state='normal'),restore_button.configure(state='normal')))
+    threading.Thread(target=work,daemon=True).start()
+restore_button=ttk.Button(frame,text='Restore a recovery backup',command=restore);restore_button.pack(anchor='w',pady=10)
 def pump():
     while not events.empty():events.get()()
     root.after(100,pump)

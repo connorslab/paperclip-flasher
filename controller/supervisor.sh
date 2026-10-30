@@ -9,6 +9,7 @@ while :; do
         now=$(date +%s)
         last=$(cat /tmp/paperclip-heartbeat 2>/dev/null)
         case "$last" in ''|*[!0-9]*) last=0;; esac
+        test "$last" -ge "$started" || last=0
         if { test "$last" -gt 0 && test $((now-last)) -gt 45; } || { test "$last" = 0 && test $((now-started)) -gt 180; }; then
             # Independent watchdog covers a wedged controller, including a trial.
             for p in $(pidof xminerd); do kill -STOP "$p"; done

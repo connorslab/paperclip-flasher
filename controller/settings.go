@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -109,6 +110,9 @@ func (c *Controller) settings(w http.ResponseWriter, r *http.Request) bool {
 		if e != nil {
 			jsonReply(w, 502, map[string]string{"error": "Device settings unavailable"})
 		} else {
+			if path == "pools" {
+				b = poolTelemetry(b)
+			}
 			jsonReply(w, 200, json.RawMessage(b))
 		}
 		return true
@@ -190,8 +194,19 @@ func (c *Controller) settings(w http.ResponseWriter, r *http.Request) bool {
 			Pass string `json:"pass"`
 		}
 		e = json.Unmarshal(body, &p)
-		if p.URL == "" || p.User == "" || len(p.URL) > 512 || len(p.User) > 256 {
+		if !validPool(p.URL, p.User) {
 			e = errors.New("pool URL and worker are required")
+		}
+		if e == nil {
+			current, err := c.native("GET", "/mcb/pools", nil, false)
+			var entries []map[string]any
+			if err != nil || json.Unmarshal(current, &entries) != nil {
+				e = errors.New("could not read current pools")
+			} else if path == "pool-delete" && len(entries) <= 1 {
+				e = errors.New("keep at least one pool")
+			} else if path == "pool-add" && len(entries) >= 10 {
+				e = errors.New("maximum of 10 pools")
+			}
 		}
 		if e == nil {
 			endpoint := "/mcb/newpool"
@@ -208,9 +223,17 @@ func (c *Controller) settings(w http.ResponseWriter, r *http.Request) bool {
 		}
 		if e == nil {
 			for i := range pools {
+				address, _ := pools[i]["url"].(string)
+				worker, _ := pools[i]["user"].(string)
+				if !validPool(address, worker) {
+					e = errors.New("invalid pool URL or worker")
+					break
+				}
 				pools[i]["pool-priority"] = i
 			}
-			_, e = c.native("PUT", "/mcb/pools", pools, true)
+			if e == nil {
+				_, e = c.native("PUT", "/mcb/pools", pools, true)
+			}
 		}
 	case "cloud", "rgb":
 		endpoint := "/mcb/cmossetting"
@@ -244,7 +267,7 @@ func (c *Controller) settings(w http.ResponseWriter, r *http.Request) bool {
 		}
 		e = json.Unmarshal(body, &q)
 		if q.New == "" || q.New != q.Confirm || len(q.New) > 128 {
-			e = errors.New("new passwords must match (1–128 characters)")
+			e = errors.New("new passwords must match (1Ã¢â‚¬â€œ128 characters)")
 		}
 		if e == nil {
 			_, e = c.login(q.Old)
@@ -284,10 +307,50 @@ func (c *Controller) settings(w http.ResponseWriter, r *http.Request) bool {
 		}
 		http.SetCookie(w, &http.Cookie{Name: "paperclip", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	}
+	if e == nil && (path == "pool-add" || path == "pool-delete" || path == "pools") {
+		c.engineGrace = time.Now().Add(90 * time.Second)
+	}
 	if e != nil {
 		jsonReply(w, 400, map[string]string{"error": e.Error()})
 	} else {
 		jsonReply(w, 200, map[string]bool{"ok": true})
 	}
 	return true
+}
+
+func validPool(address, worker string) bool {
+	u, err := url.Parse(address)
+	if err != nil || (u.Scheme != "stratum+tcp" && u.Scheme != "stratum+ssl") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return false
+	}
+	port, err := strconv.Atoi(u.Port())
+	return err == nil && port > 0 && port <= 65535 && strings.TrimSpace(worker) != "" && len(worker) <= 256 && len(address) <= 512 && !strings.ContainsAny(worker, "\r\n\x00")
+}
+
+func poolTelemetry(body []byte) []byte {
+	var pools []map[string]any
+	if json.Unmarshal(body, &pools) != nil {
+		return body
+	}
+	live, err := minerRPC("pools")
+	var rows []map[string]any
+	if err == nil {
+		_ = json.Unmarshal(live["POOLS"], &rows)
+	}
+	for _, p := range pools {
+		p["mining"] = false
+		p["telemetry_available"] = err == nil
+		for _, row := range rows {
+			if row["URL"] == p["url"] && row["User"] == p["user"] {
+				p["mining"] = row["Stratum Active"] == true
+				p["accepted"] = row["Accepted"]
+				p["connected"] = row["Status"] == "Alive"
+			}
+		}
+	}
+	result, err := json.Marshal(pools)
+	if err != nil {
+		return body
+	}
+	return result
 }
