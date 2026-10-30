@@ -6,12 +6,11 @@ $('extra-pages').innerHTML=`
 <article class="card"><h2>Restart</h2><p>A restart briefly interrupts mining. Any unfinished tuning trial is rolled back before mining resumes.</p><button id="reboot" class="secondary">Restart miner</button><h2 class="spaced">Firmware & recovery</h2><p>Paperclip currently supports KDBox 2.2.1 / MCB_V5_4. Stock firmware uploads are blocked here because unverified upgrades can permanently remove SSH access. Use Paperclip Flasher to back up, update, or restore the UI.</p><details><summary>Original maintenance interface</summary><p>For legacy factory reset and firmware maintenance only. These actions can remove your settings or Paperclip safeguards.</p><a href="/legacy.html#/setting-system" target="_blank" rel="noopener">Open original maintenance ↗</a></details><details class="spaced"><summary>Cloud management (optional)</summary><form id="cloud-form"><label class="check"><input id="cloud-enable" type="checkbox"> Enable existing vendor cloud management</label>${field('cloud-key','Management key','password')}<button>Save cloud settings</button></form></details><details id="rgb-panel" class="spaced" hidden><summary>RGB lighting</summary><p>Device-specific lighting configuration.</p><textarea id="rgb-json" rows="6"></textarea><button id="rgb-save">Save lighting</button></details></article></div></section>
 <section data-page="diagnostics" hidden><article class="card"><h2>Diagnostics</h2><div class="actions"><select id="diagnostic-kind" aria-label="Diagnostic report"><option value="icinfo">Chip temperatures & hardware errors</option><option value="minersyslog">Mining log</option><option value="monitorlog">Monitor log</option><option value="syslog">System log</option><option value="kmsg">Kernel log</option><option value="psinfo">Processes</option><option value="meminfo">Memory</option><option value="vsinfo">Versions</option><option value="minerinfo">Mining configuration</option><option value="minerhistory">Mining history</option></select><button id="diagnostic-load">Refresh</button><button id="diagnostic-save" class="secondary">Download</button></div><div id="chips"></div><pre id="diagnostic-output">Unlock controls to load diagnostics.</pre></article></section>`;
 const poolsCard=document.createElement('section');poolsCard.className='card spaced';poolsCard.innerHTML=`<h2>Mining pools</h2><p>The primary pool is tried first, followed by backups in order. Changes save immediately.</p><p id="pool-state" role="status">Loading saved pools…</p><button id="pool-unlock" hidden>Unlock to edit pools</button><div id="pools"></div><form id="pool-form">${field('pool-url','Pool URL (stratum+tcp://host:port)')}${field('pool-user','Payout address / worker')}${field('pool-pass','Pool password','password')}<button>Add pool</button></form>`;document.querySelector('[data-page="mining"]').prepend(poolsCard);
-const summary=document.createElement('section');summary.className='card';summary.innerHTML='<h2>Active pool</h2><p id="active-pool">Loading saved pools…</p><a href="#mining">View pools & priority →</a>';document.querySelector('[data-page="overview"]').prepend(summary);
 $('pool-unlock').onclick=()=>$('login').showModal();
 let poolData=[],poolsEditable=false,wifiData={},cloudData={};
 function pageName(){const p=location.hash.slice(1);return ['mining','network','system','diagnostics'].includes(p)?p:'overview'}
 async function loadPage(){const page=pageName();document.querySelector("h1").textContent=({overview:"Your miner, at a glance.",mining:"Mining & performance",network:"Network connections",system:"Device settings",diagnostics:"Miner diagnostics"})[page];document.querySelectorAll('[data-page]').forEach(el=>el.hidden=el.dataset.page!==page);document.querySelectorAll('nav a').forEach(el=>el.setAttribute('aria-current',el.hash==='#'+page?'page':'false'));try{
- if(page==='mining'||page==='overview')await loadPools();
+ if(page==='mining')await loadPools();
  if(page==='network'){const n=await api('network');$('dhcp').checked=n.useDHCP;$('auto-dns').checked=n.useAuto;for(const [id,k]of [['ip','IPv4addr'],['mask','Subnetmask'],['gateway','Router'],['dns1','DNS1'],['dns2','DNS2']])$(id).value=n.setIP?.[k]||'';networkFields();await loadWifi()}
  if(page==='system'){const v=await api('system');$('system-info').textContent=Object.entries(v).map(([k,v])=>`${k}: ${v}`).join('\n');const settings=await api('device-settings');$('identify').checked=settings.ledcontrol;cloudData=await api('cloud');$('cloud-enable').checked=cloudData.enable;$('cloud-key').value=cloudData.userkey||'';try{const rgb=await api('rgb');$('rgb-panel').hidden=!rgb;if(rgb)$('rgb-json').value=JSON.stringify(rgb,null,2)}catch(e){$('rgb-panel').hidden=true}}
  if(page==='diagnostics')await diagnostic();
@@ -30,14 +29,12 @@ async function loadPools(){
   if(!Array.isArray(data))throw Error('Invalid pool response');
   poolData=data;renderPools();$('pool-unlock').hidden=poolsEditable;$('pool-form').hidden=!poolsEditable;
   $('pool-state').textContent=poolData.length?(poolsEditable?'':'Read-only · unlock to add, remove, or reorder pools.'):'No pools configured. Unlock and add a pool to start mining.';
-  const active=poolData.filter(p=>p.mining);
-  $('active-pool').textContent=active.length?active.map(p=>`${p.url}\n${p.user}`).join('\n'):poolData.length?'Pools configured; waiting for active-pool telemetry.':'No pools configured.';
  }catch(e){
   $('pools').replaceChildren();$('pool-form').hidden=true;
   const locked=e.status===401;
   $('pool-unlock').hidden=!locked;
   const message=locked?'Unlock to view saved pools. Mining continues while controls are locked.':'Could not load saved pools: '+e.message+'. Retrying automatically.';
-  $('pool-state').textContent=message;$('active-pool').textContent=message;
+  $('pool-state').textContent=message;
  }
 }
 function renderPools(){
@@ -66,4 +63,4 @@ $('cloud-form').onsubmit=e=>{e.preventDefault();action(()=>api('cloud',{...cloud
 async function diagnostic(){const v=await api('diagnostics?kind='+$('diagnostic-kind').value);$('diagnostic-output').textContent=v.body;$('chips').replaceChildren();if($('diagnostic-kind').value==='icinfo'){const chips=JSON.parse(v.body).drawdata?.flat()||[];chips.forEach(c=>{const card=document.createElement('div');card.className='chip';card.textContent=`Chip ${c.chipindex}\n${c.temp}°C\n${c.hwerr} HW errors`;$('chips').append(card)})}}
 $('diagnostic-load').onclick=()=>action(diagnostic);$('diagnostic-kind').onchange=()=>action(diagnostic);$('diagnostic-save').onclick=()=>{const url=URL.createObjectURL(new Blob([$('diagnostic-output').textContent],{type:'text/plain'}));const a=document.createElement('a');a.href=url;a.download='paperclip-'+$('diagnostic-kind').value+'.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 
-setInterval(()=>{if(["mining","overview"].includes(pageName())&&!busy)loadPools()},10000);
+setInterval(()=>{if(pageName()==="mining"&&!busy)loadPools()},10000);
