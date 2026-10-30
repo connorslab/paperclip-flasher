@@ -8,11 +8,12 @@ from pathlib import Path
 import shlex
 import time
 from urllib.parse import urlencode
+import urllib.request
 import paramiko
 
 
 class Device:
-    def __init__(self, host, ssh_password, confirm_host):
+    def __init__(self, host, ssh_password, confirm_host, web_password=None):
         ipaddress.ip_address(host)
         self.host = host
         client = self.client = paramiko.SSHClient()
@@ -22,9 +23,51 @@ class Device:
                 if not confirm_host(hostname, fingerprint):
                     raise RuntimeError('Device identity was not confirmed')
         client.set_missing_host_key_policy(Trust())
-        client.connect(host, username='root', password=ssh_password, timeout=10,
-                       auth_timeout=10, look_for_keys=False, allow_agent=False)
+        try:
+            client.connect(host, username='root', password=ssh_password, timeout=10,
+                           auth_timeout=10, look_for_keys=False, allow_agent=False)
+        except paramiko.ssh_exception.NoValidConnectionsError:
+            if web_password is None:
+                raise RuntimeError('SSH is off. Enter the dashboard password to enable it.') from None
+            self.enable_ssh(host, web_password)
+            for attempt in range(5):
+                time.sleep(1)
+                try:
+                    client.connect(host, username='root', password=ssh_password, timeout=5,
+                                   auth_timeout=10, look_for_keys=False, allow_agent=False)
+                    break
+                except paramiko.ssh_exception.NoValidConnectionsError:
+                    if attempt == 4:raise RuntimeError('SSH did not start; no installation files were changed.') from None
         self.token = None
+
+    @staticmethod
+    def enable_ssh(host, password):
+        address = ipaddress.ip_address(host)
+        if address.version != 4 or not address.is_private or address.is_loopback:
+            raise ValueError('Automatic SSH setup requires the miner’s private LAN IPv4 address')
+        # The stock API is HTTP-only. Refuse redirects and never use system proxies.
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):return None
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        base = 'http://' + host
+        def request(path, data=None, token=None):
+            headers = {'Content-Type':'application/json'}
+            if token:headers['Authorization']='Bearer '+token
+            req=urllib.request.Request(base+path, data=data, headers=headers,
+                                       method='GET' if data is None else 'PUT')
+            with opener.open(req,timeout=8) as response:
+                body=response.read(1024*1024)
+                return json.loads(body) if body.strip() else None
+        info=request('/mcb/status')
+        if (info.get('model'),info.get('firmware'),info.get('mcbversion')) != ('Goldshell-KDBox','2.2.1','MCB_V5_4'):
+            raise RuntimeError('Unsupported device; SSH settings were not changed')
+        try:
+            auth=request('/user/login?'+urlencode({'username':'admin','password':password}))
+            token=auth.get('JWT Token')
+            if not token:raise ValueError('login rejected')
+            request('/mcb/protect', b'{}', token)
+        except Exception:
+            raise RuntimeError('Could not enable SSH. Check the dashboard password and LAN connection.') from None
 
     def close(self):
         self.client.close()

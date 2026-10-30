@@ -36,7 +36,7 @@ def run():
     def work():
         device=None
         try:
-            device=Device(data['host'],data['ssh'],confirm_host)
+            device=Device(data['host'],data['ssh'],confirm_host,web_password=data['web'])
             repo=Path(__file__).resolve().parents[1]
             backup=Path.home()/'PaperclipFlasher'/'backups'/time.strftime('%Y%m%d-%H%M%S')
             device.install(repo,data['web'],backup,lambda text:events.put(lambda:status.set(text)))
@@ -52,11 +52,11 @@ button=ttk.Button(frame,text='Back up & install Paperclip',command=run);button.p
 def restore():
     folder=filedialog.askdirectory(title='Choose this miner’s recovery backup')
     if not folder or not messagebox.askyesno('Restore backup','Restore this miner’s saved configuration and restart it?'):return
-    host=values['host'].get().strip();password=values['ssh'].get();button.configure(state='disabled');restore_button.configure(state='disabled')
+    host=values['host'].get().strip();password=values['ssh'].get();web_password=values['web'].get();button.configure(state='disabled');restore_button.configure(state='disabled')
     def work():
         device=None
         try:
-            device=Device(host,password,confirm_host);device.restore(folder);events.put(lambda:status.set('Backup restored. Miner is restarting.'))
+            device=Device(host,password,confirm_host,web_password=web_password);device.restore(folder);events.put(lambda:status.set('Backup restored. Miner is restarting.'))
         except Exception as exc:
             msg=str(exc);events.put(lambda:status.set('Restore stopped: '+msg))
         finally:

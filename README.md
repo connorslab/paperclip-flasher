@@ -36,7 +36,10 @@ Installation preserves existing pools and the selected algorithm. Pool details
 are configured in the dashboard, not in the installer.
 
 The installer makes a private recovery backup under `~/PaperclipFlasher/backups` before changing anything. It does
-not try to upgrade unsupported firmware or recover unknown passwords.
+not try to upgrade unsupported firmware or recover unknown passwords. If SSH is
+off, the installer verifies the supported model and enables the existing SSH
+server using the dashboard password. This stock API uses unencrypted HTTP; run
+the installer only on a trusted LAN. Installation file transfers use SSH.
 
 ## Dashboard
 
