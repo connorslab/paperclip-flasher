@@ -212,6 +212,10 @@ func temperature(v any) (float64, bool) {
 	return f, e == nil && f > 0
 }
 func (c *Controller) safety() {
+	// Keep cooling at full speed while the native engine initializes telemetry.
+	if time.Now().Before(c.engineGrace) {
+		c.fans(100)
+	}
 	b, err := c.native("GET", "/mcb/cgminer?cgminercmd=devs", nil, false)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -279,9 +283,14 @@ func (c *Controller) safety() {
 	}
 	c.fans(t.FanAt(temp))
 	for i := 0; i < 2; i++ {
-		b, e := os.ReadFile(fmt.Sprintf("/sys/class/fans/fan%d/rpm", i))
-		rpm, e2 := strconv.Atoi(strings.TrimSpace(string(b)))
-		if e != nil || e2 != nil || rpm < 3000 {
+		readRPM := func() (int, error) {
+			b, e := os.ReadFile(fmt.Sprintf("/sys/class/fans/fan%d/rpm", i))
+			if e != nil {
+				return 0, e
+			}
+			return strconv.Atoi(strings.TrimSpace(string(b)))
+		}
+		if !fanReady(readRPM, time.Now().Before(c.engineGrace), time.Sleep) {
 			if c.pending != nil {
 				_ = c.rollback("Fan RPM fault")
 			}
